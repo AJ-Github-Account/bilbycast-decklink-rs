@@ -46,7 +46,7 @@
 //! clock on one 90 kHz timeline that the *caller* owns — see
 //! [`DecklinkPlayout::write_video`].
 
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -428,7 +428,9 @@ pub fn enumerate_devices() -> Vec<DecklinkDeviceInfo> {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(count as usize);
-    let mut buf = [0i8; 256];
+    // `c_char`, not `i8` — it is unsigned on aarch64, so a hardcoded `i8`
+    // buffer only matches the bindgen signature on x86_64.
+    let mut buf = [0 as c_char; 256];
     for index in 0..count {
         let rc = unsafe { sys::dl_device_name(index, buf.as_mut_ptr(), buf.len()) };
         if rc != sys::DL_OK as i32 {
