@@ -204,7 +204,10 @@ moving element confirming live video (`examples/playout_bars.rs`).
 ## Known-good bilbycast-edge SDI config
 
 Verified on bilby-z440 (live 1080i50 source → NVENC → SRT: correct colours,
-audio, no freezing). Run the edge with `BILBYCAST_PROBE_SESSION_LIMITS=0`.
+audio, no freezing). Run the edge with `tuning.probe_session_limits: false` in its `config.json`
+(Manager → node → Configure → **Tuning**). The old
+`BILBYCAST_PROBE_SESSION_LIMITS=0` environment variable still works for one
+release, beneath the config field, but raises a `deprecated_env_var` event.
 
 ```json
 { "id": "sdi1", "name": "SDI 1", "type": "sdi",
