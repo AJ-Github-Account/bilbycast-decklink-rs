@@ -230,10 +230,15 @@ Gotchas:
   1080i50 source gives `signal_present = false` on every frame.)
 * **`tune`/`preset` vocabularies are per-backend.** The edge historically
   defaulted `tune` to `"zerolatency"` (x264-only ⇒ NVENC EINVAL) and passed
-  x264 preset names (`ultrafast` ⇒ NVENC/QSV EINVAL) through verbatim. Fixed
-  on bilbycast-edge branch `fix/nvenc-tune-default` (`sanitise_tune` +
-  `sanitise_preset`); on builds without it, set `tune: ""` and a preset from
-  {fast, medium, slow} for hardware backends.
+  x264 preset names (`ultrafast` ⇒ NVENC/QSV EINVAL) through verbatim. The edge
+  now sanitises both *after* the backend resolves, in
+  `engine::video_encode_util`: `sanitise_tune` drops a tune the resolved
+  backend cannot accept and `sanitise_preset` remaps a rejected preset onto its
+  nearest legal one (`ultrafast` ⇒ `fast` on NVENC), each logging
+  `encoder_tune_not_supported` / `encoder_preset_not_supported`. So the
+  `tune: ""` above is belt-and-braces rather than a requirement, and a wrong
+  preset is corrected rather than fatal — but the warning is the only sign it
+  happened, so read the log before assuming the encoder ran what you configured.
 * **`chroma` must be `"yuv420p"` for `h264_nvenc`** (h264 NVENC has no 4:2:2
   path; only `hevc_nvenc` does).
 * **Bitrate**: 25 Mbps overran SRT egress here (~0.4 % TS packet loss → visible
@@ -242,28 +247,34 @@ Gotchas:
 
 ## Upstream bugs found during bring-up
 
-None are SDI-specific. Each is fixed on its own branch for independent
-review (full narrative: bilbycast-edge `docs/sdi.md`):
+None are SDI-specific. All six are merged and shipping (edge v0.109.0) — the
+`fix/*` branches they were reviewed on are gone, so grep for the symbols, not
+the branch names (full narrative: bilbycast-edge `docs/sdi.md`):
 
-1. `tune = "zerolatency"` default — x264-only, NVENC EINVAL for every user
-   (`fix/nvenc-tune-default`).
+1. `tune = "zerolatency"` default — x264-only, NVENC EINVAL for every user.
+   `default_tune_for` now returns it for x264/x265 only, and `sanitise_tune`
+   drops anything the resolved backend rejects
+   (`bilbycast-edge/src/engine/video_encode_util.rs`, edge #55).
 2. `try_build_scaler` fed same-resolution 4:2:2 planes to a 4:2:0 encoder
    unconverted — perfect luma, ghosted chroma; also hits ST 2110-20. Fixing
    it exposed the scaler's full-range `Yuvj420p` target vs the encoder's
-   limited-range open — a levels shift (`fix/scaler-chroma-mismatch` +
-   video-crates `fix/planar-yuv-layout`).
+   limited-range open — a levels shift (edge #56 + video-crates #4).
 3. Ingress encoder failures reported only to the manager event bus — a
    standalone edge failed silently (fixed inline).
 4. `libffmpeg-video-sys/build.rs` replaced `PKG_CONFIG_PATH` for FFmpeg's
-   configure, hiding header-only `.pc` files like ffnvcodec
-   (`fix/pkg-config-path-inheritance`).
+   configure, hiding header-only `.pc` files like ffnvcodec. The aggregated
+   `pkgconfig_paths` now folds the caller's `PKG_CONFIG_PATH` in alongside the
+   paths it adds itself, instead of replacing it (video-crates #2).
 5. **The big one:** ingest paths fed the encoder 90 kHz pts against a
    declared 1/fps timebase ⇒ libx264's VBV overflows and **SIGSEGVs** ~one
    lookahead-depth after open. NVENC tolerates it, which is how it shipped.
-   Also latent in ST 2110-20/-23 ingest (`fix/encoder-timebase-90k` +
-   `set_pts_90k` in the edge).
+   Also latent in ST 2110-20/-23 ingest. Both lazy-open sites now call
+   `pipeline.set_pts_90k()` — `engine::sdi_io` and `engine::st2110_video_io`
+   (edge 13ed72a + video-crates #3).
 6. x264-only preset names (`ultrafast`, …) EINVAL on NVENC/QSV — same family
-   as #1, same branch.
+   as #1. `sanitise_preset` *maps* rather than drops, because a preset carries
+   the operator's speed/quality intent: `ultrafast` becomes `fast` on NVENC,
+   `veryfast` on QSV.
 
 ## Key Design Constraints
 

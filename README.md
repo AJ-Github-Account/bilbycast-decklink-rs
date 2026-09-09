@@ -11,7 +11,8 @@ bilbycast-decklink-rs/
 ├── libdecklink-sys/   C++ shim exposing a C ABI over the SDK, + bindgen FFI
 │   └── shim/          decklink_shim.{h,cpp}, decklink_shim_playout.cpp
 └── decklink-rs/       safe wrapper: DecklinkCapture, DecklinkPlayout,
-                       device_status, enumerate_devices
+                       device_status, enumerate_devices, api_available,
+                       VANC ancillary capture + playout
 ```
 
 ## Why the SDK and not FFmpeg's `decklink` avdevice
@@ -40,6 +41,10 @@ cargo build
 # On a host with a card + Desktop Video installed:
 cargo run -p decklink-rs --example list_devices
 cargo run -p decklink-rs --example capture_probe -- "DeckLink Quad (1)" auto
+
+# Paired VANC loopback (playout on one sub-device, capture on the looped port):
+cargo run -p decklink-rs --example playout_ancillary -- "DeckLink Quad (1)"
+cargo run -p decklink-rs --example capture_ancillary -- "DeckLink Quad (2)"
 ```
 
 Runtime requires Blackmagic **Desktop Video** (kernel driver + `libDeckLinkAPI.so`).
@@ -63,6 +68,18 @@ config, and the upstream bugs found during bring-up.
   lip-syncs them in hardware. Audio is 48 kHz 32-bit interleaved. Verified by
   physical BNC loopback: bars/video out one sub-device, captured on the looped
   port — correct colours, live motion, continuous audio, `late=0 dropped=0`.
+* **Generic VANC ancillary** — `CapturedVideo.ancillary` on capture,
+  `DecklinkPlayout::write_video_with_ancillary` on playout. Protocol-agnostic
+  `did` / `sdid` / `line_number` / `data`; the shim filters to
+  `bmdAncillaryDataSpaceVANC` (HANC is not surfaced) and copies the bytes out
+  inside the capture callback. Nothing here knows what SCTE-104 is — payload
+  semantics belong to the caller. Hardware-loopback verified at 1080i50, exact
+  byte-for-byte SCTE-104 recovered; see CLAUDE.md for the two undocumented SDK
+  requirements the write side has to satisfy.
+* `api_available` — whether the API itself is reachable (Desktop Video
+  installed, `libDeckLinkAPI.so` dlopened): it creates and immediately releases
+  an iterator, opening no card. `enumerate_devices` returns empty for *both* a
+  missing driver and a driver with no card fitted; this is what separates them.
 
 On 8-port Quad cards the physical→software connector mapping interleaves and
 sub-device pairs share connectors, so `enumerate_devices` reports the BNC as
